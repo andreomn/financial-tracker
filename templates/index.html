@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>CVM DFP Finder</title>
+  <style>
+    body { font-family: Inter, Arial, sans-serif; background:#f4f7fb; margin:0; color:#1f2937; }
+    .wrap { max-width: 980px; margin: 40px auto; background:#fff; border-radius:16px; padding:28px; box-shadow:0 8px 24px rgba(0,0,0,.08); }
+    h1 { margin:0 0 8px; }
+    p { color:#4b5563; }
+    .row { display:flex; gap:10px; margin-top:18px; }
+    input { flex:1; padding:14px 16px; border:1px solid #d1d5db; border-radius:10px; font-size:16px; }
+    button { padding:14px 18px; border:0; background:#2563eb; color:white; border-radius:10px; font-weight:600; cursor:pointer; }
+    button:hover { background:#1d4ed8; }
+    .actions { margin-top:14px; }
+    .hidden { display:none; }
+    table { width:100%; border-collapse:collapse; margin-top:20px; }
+    th, td { border-bottom:1px solid #e5e7eb; padding:10px 8px; text-align:left; font-size:14px; }
+    .status { margin-top:12px; font-size:14px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Consulta DFP na CVM</h1>
+    <p>Digite o nome da empresa e pressione Enter para buscar as últimas DFPs.</p>
+    <form id="formBusca" class="row">
+      <input id="empresa" placeholder="Ex: Petrobras" required />
+      <button type="submit">Buscar</button>
+    </form>
+    <div id="status" class="status"></div>
+    <div class="actions hidden" id="downloadArea">
+      <button id="downloadExcel" type="button">Baixar Excel consolidado</button>
+    </div>
+
+    <table id="tabela" class="hidden">
+      <thead><tr><th>#</th><th>Link DFP</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <script>
+    const form = document.getElementById('formBusca');
+    const statusEl = document.getElementById('status');
+    const tabela = document.getElementById('tabela');
+    const tbody = tabela.querySelector('tbody');
+    const downloadArea = document.getElementById('downloadArea');
+    const btnDownload = document.getElementById('downloadExcel');
+    let ultimaEmpresa = '';
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const empresa = document.getElementById('empresa').value.trim();
+      if (!empresa) return;
+      ultimaEmpresa = empresa;
+      statusEl.textContent = 'Consultando CVM...';
+      tabela.classList.add('hidden');
+      downloadArea.classList.add('hidden');
+      tbody.innerHTML = '';
+
+      const resp = await fetch('/buscar-dfps', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ empresa })
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        statusEl.textContent = data.erro || 'Falha na consulta.';
+        return;
+      }
+
+      statusEl.textContent = `Foram encontradas ${data.links.length} DFP(s).`;
+      data.links.forEach((link, idx) => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${idx + 1}</td><td><a href="${link}" target="_blank">${link}</a></td>`;
+        tbody.appendChild(tr);
+      });
+      tabela.classList.remove('hidden');
+      downloadArea.classList.remove('hidden');
+    });
+
+    btnDownload.addEventListener('click', async () => {
+      if (!ultimaEmpresa) return;
+      statusEl.textContent = 'Gerando Excel...';
+      const resp = await fetch('/fill-dfp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ empresa: ultimaEmpresa })
+      });
+      if (!resp.ok) {
+        const data = await resp.json();
+        statusEl.textContent = data.erro || 'Falha ao gerar Excel.';
+        return;
+      }
+      const blob = await resp.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `dfp_cvm_${ultimaEmpresa}.xlsx`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+      statusEl.textContent = 'Excel gerado com sucesso.';
+    });
+  </script>
+</body>
+</html>
