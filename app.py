@@ -78,6 +78,13 @@ def carregar_empresas_cvm() -> list[dict[str, str]]:
     logger.info("carregar_empresas_cvm_fetch_done total=%s", len(rows))
     return rows
 
+    for row in reader:
+        codigo = (row.get("CD_CVM") or row.get("CODIGO_CVM") or "").strip()
+        nome = (row.get("DENOM_SOCIAL") or row.get("NOME_EMPRESARIAL") or "").strip()
+        situacao = (row.get("SIT") or row.get("SITUACAO") or "").strip().upper()
+        if not codigo or not nome:
+            continue
+        rows.append({"codigo_cvm": codigo, "nome": nome, "nome_norm": _normalizar_texto(nome), "situacao": situacao})
 
 def encontrar_empresa(consulta: str) -> dict[str, str] | None:
     consulta_norm = _normalizar_texto(consulta)
@@ -98,6 +105,11 @@ def encontrar_empresa(consulta: str) -> dict[str, str] | None:
     return candidatas[0]
 
 
+def _codigo_cvm_6_digitos(codigo: str) -> str:
+    digits = re.sub(r"\D", "", str(codigo))
+    return digits.zfill(6)[-6:]
+
+
 def _parse_links_from_html(html: str) -> list[str]:
     soup = BeautifulSoup(html, "html.parser")
     urls: list[str] = []
@@ -112,8 +124,27 @@ def _parse_links_from_html(html: str) -> list[str]:
 
 
 def listar_dfps_por_codigo(codigo_cvm: str, data_inicial: str = "", data_final: str = "") -> list[str]:
-    payload: dict[str, Any] = {"codigoCVM": codigo_cvm, "dataIni": _normalizar_data(data_inicial), "dataFim": _normalizar_data(data_final), "tipoDocumento": "DFP", "setorAtividade": "", "categoriaEmissor": "", "situacaoDocumento": ""}
-    logger.info("listar_dfps_por_codigo codigo=%s", codigo_cvm)
+    codigo6 = _codigo_cvm_6_digitos(codigo_cvm)
+    payload: dict[str, Any] = {
+        "dataDe": _normalizar_data(data_inicial) or "",
+        "dataAte": _normalizar_data(data_final) or "",
+        "empresa": codigo6,
+        "setorAtividade": "-1",
+        "categoriaEmissor": "-1",
+        "situacaoEmissor": "-1",
+        "tipoParticipante": "-1",
+        "dataReferencia": "",
+        "categoria": "EST_4",
+        "periodo": "2",
+        "horaIni": "",
+        "horaFim": "",
+        "palavraChave": "",
+        "ultimaDtRef": False,
+        "tipoEmpresa": "0",
+        "token": "",
+        "versaoCaptcha": "",
+    }
+    logger.info("listar_dfps_por_codigo codigo_original=%s codigo6=%s payload_empresa=%s", codigo_cvm, codigo6, payload["empresa"])
     response = requests.post(CVM_ENDPOINT, json=payload, timeout=DEFAULT_TIMEOUT)
     response.raise_for_status()
     body = response.json()
@@ -169,6 +200,25 @@ def listar_empresas():
     view = [{"codigo_cvm": e["codigo_cvm"], "nome": e["nome"], "situacao": e["situacao"]} for e in rows[start:end]]
     return jsonify({"total": total, "page": page, "size": size, "empresas": view})
 
+
+
+@app.get("/sugestoes-empresas")
+def sugestoes_empresas():
+    q = str(request.args.get("q", "")).strip()
+    limit = min(50, max(5, int(request.args.get("limit", 20))))
+    try:
+        rows = carregar_empresas_cvm()
+    except Exception as exc:
+        logger.exception("sugestoes_empresas_fail")
+        return jsonify({"erro": f"falha ao carregar base de empresas CVM: {exc}"}), 502
+
+    if not q:
+        out = rows[:limit]
+    else:
+        qn = _normalizar_texto(q)
+        out = [e for e in rows if qn in e["nome_norm"]][:limit]
+
+    return jsonify({"sugestoes": [{"codigo_cvm": e["codigo_cvm"], "nome": e["nome"]} for e in out]})
 
 @app.post("/buscar-dfps")
 def buscar_dfps():
