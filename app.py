@@ -78,13 +78,6 @@ def carregar_empresas_cvm() -> list[dict[str, str]]:
     logger.info("carregar_empresas_cvm_fetch_done total=%s", len(rows))
     return rows
 
-    for row in reader:
-        codigo = (row.get("CD_CVM") or row.get("CODIGO_CVM") or "").strip()
-        nome = (row.get("DENOM_SOCIAL") or row.get("NOME_EMPRESARIAL") or "").strip()
-        situacao = (row.get("SIT") or row.get("SITUACAO") or "").strip().upper()
-        if not codigo or not nome:
-            continue
-        rows.append({"codigo_cvm": codigo, "nome": nome, "nome_norm": _normalizar_texto(nome), "situacao": situacao})
 
 def encontrar_empresa(consulta: str) -> dict[str, str] | None:
     consulta_norm = _normalizar_texto(consulta)
@@ -110,7 +103,35 @@ def _codigo_cvm_6_digitos(codigo: str) -> str:
     return digits.zfill(6)[-6:]
 
 
+def _extract_html_payload(body: Any) -> str:
+    """Extrai o HTML retornado pela CVM mesmo quando o formato varia."""
+    if isinstance(body, str):
+        return body
+
+    if isinstance(body, dict):
+        if "d" in body:
+            return _extract_html_payload(body["d"])
+        for value in body.values():
+            candidate = _extract_html_payload(value)
+            if candidate:
+                return candidate
+        return ""
+
+    if isinstance(body, list):
+        for item in body:
+            candidate = _extract_html_payload(item)
+            if candidate:
+                return candidate
+        return ""
+
+    return ""
+
+    candidatas = sorted(candidatas, key=lambda e: (0 if e["situacao"] == "ATIVO" else 1, -SequenceMatcher(None, consulta_norm, e["nome_norm"]).ratio(), len(e["nome"])))
+    return candidatas[0]
+
 def _parse_links_from_html(html: str) -> list[str]:
+    if not isinstance(html, str):
+        raise TypeError(f"html inválido para parsing: {type(html).__name__}")
     soup = BeautifulSoup(html, "html.parser")
     urls: list[str] = []
     for anchor in soup.select("a[href*='frmGerenciaPaginaFRE.aspx']"):
@@ -148,7 +169,9 @@ def listar_dfps_por_codigo(codigo_cvm: str, data_inicial: str = "", data_final: 
     response = requests.post(CVM_ENDPOINT, json=payload, timeout=DEFAULT_TIMEOUT)
     response.raise_for_status()
     body = response.json()
-    html = body.get("d", "") if isinstance(body, dict) else ""
+    html = _extract_html_payload(body)
+    if not html:
+        logger.warning("listar_dfps_por_codigo_empty_html codigo=%s body_type=%s", codigo_cvm, type(body).__name__)
     links = _parse_links_from_html(html)
     logger.info("listar_dfps_por_codigo_done codigo=%s total_links=%s", codigo_cvm, len(links))
     return links
