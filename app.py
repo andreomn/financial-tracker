@@ -78,6 +78,13 @@ def carregar_empresas_cvm() -> list[dict[str, str]]:
     logger.info("carregar_empresas_cvm_fetch_done total=%s", len(rows))
     return rows
 
+    for row in reader:
+        codigo = (row.get("CD_CVM") or row.get("CODIGO_CVM") or "").strip()
+        nome = (row.get("DENOM_SOCIAL") or row.get("NOME_EMPRESARIAL") or "").strip()
+        situacao = (row.get("SIT") or row.get("SITUACAO") or "").strip().upper()
+        if not codigo or not nome:
+            continue
+        rows.append({"codigo_cvm": codigo, "nome": nome, "nome_norm": _normalizar_texto(nome), "situacao": situacao})
 
 def encontrar_empresa(consulta: str) -> dict[str, str] | None:
     consulta_norm = _normalizar_texto(consulta)
