@@ -140,6 +140,9 @@ def listar_dfps_por_codigo(codigo_cvm: str, data_inicial: str = "", data_final: 
     html = body.get("d", "") if isinstance(body, dict) else ""
     return _parse_links_from_html(html)
 
+def extrair_tabelas_dfp(url: str) -> pd.DataFrame:
+    response = requests.get(url, timeout=DEFAULT_TIMEOUT)
+    response.raise_for_status()
 
 def extrair_tabelas_dfp(url: str) -> pd.DataFrame:
     response = requests.get(url, timeout=DEFAULT_TIMEOUT)
@@ -154,11 +157,34 @@ def extrair_tabelas_dfp(url: str) -> pd.DataFrame:
         frames.append(tabela)
     return pd.concat(frames, ignore_index=True)
 
+    frames = []
+    for idx, tabela in enumerate(tabelas, start=1):
+        tabela = tabela.copy()
+        tabela.insert(0, "dfp_origem", f"Tabela {idx}")
+        frames.append(tabela)
+
+    return pd.concat(frames, ignore_index=True)
+
 
 @app.get("/")
 def home():
     return render_template("index.html")
 
+@app.get("/")
+def home():
+    return render_template("index.html")
+
+@app.get("/health")
+def health() -> tuple[dict[str, str], int]:
+    return {"status": "ok"}, 200
+
+
+@app.post("/buscar-dfps")
+def buscar_dfps():
+    data = request.get_json(silent=True) or {}
+    empresa_consulta = str(data.get("empresa", "")).strip()
+    if not empresa_consulta:
+        return jsonify({"erro": "campo 'empresa' é obrigatório"}), 400
 
 @app.get("/health")
 def health() -> tuple[dict[str, str], int]:
