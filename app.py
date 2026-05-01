@@ -126,6 +126,8 @@ def _extract_html_payload(body: Any) -> str:
 
     return ""
 
+    candidatas = sorted(candidatas, key=lambda e: (0 if e["situacao"] == "ATIVO" else 1, -SequenceMatcher(None, consulta_norm, e["nome_norm"]).ratio(), len(e["nome"])))
+    return candidatas[0]
 
 def _parse_links_from_html(html: str) -> list[str]:
     if not isinstance(html, str):
