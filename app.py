@@ -1,6 +1,10 @@
+import csv
 import io
 import re
+import time
+import unicodedata
 from datetime import datetime
+from difflib import SequenceMatcher
 from typing import Any
 
 import pandas as pd
@@ -12,7 +16,11 @@ app = Flask(__name__)
 
 CVM_ENDPOINT = "https://www.rad.cvm.gov.br/ENET/frmConsultaExternaCVM.aspx/ListarDocumentos"
 FRE_BASE_URL = "https://www.rad.cvm.gov.br/ENET/frmGerenciaPaginaFRE.aspx"
+CVM_COMPANIES_CSV_URL = "https://dados.cvm.gov.br/dados/CIA_ABERTA/CAD/DADOS/cad_cia_aberta.csv"
 DEFAULT_TIMEOUT = 45
+COMPANY_CACHE_TTL = 60 * 60 * 6
+
+_company_cache = {"ts": 0.0, "rows": []}
 
 
 def _normalizar_data(valor: str | None) -> str:
@@ -22,6 +30,74 @@ def _normalizar_data(valor: str | None) -> str:
         return datetime.fromisoformat(valor).strftime("%d/%m/%Y")
     except ValueError:
         return valor
+
+
+def _normalizar_texto(texto: str) -> str:
+    texto = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"\s+", " ", texto.lower()).strip()
+
+
+def carregar_empresas_cvm() -> list[dict[str, str]]:
+    agora = time.time()
+    if _company_cache["rows"] and (agora - _company_cache["ts"] < COMPANY_CACHE_TTL):
+        return _company_cache["rows"]
+
+    response = requests.get(CVM_COMPANIES_CSV_URL, timeout=DEFAULT_TIMEOUT)
+    response.raise_for_status()
+
+    decoded = response.content.decode("latin1", errors="ignore")
+    reader = csv.DictReader(io.StringIO(decoded), delimiter=';')
+    rows: list[dict[str, str]] = []
+
+    for row in reader:
+        codigo = (row.get("CD_CVM") or "").strip()
+        nome = (row.get("DENOM_SOCIAL") or "").strip()
+        situacao = (row.get("SIT") or "").strip().upper()
+        if not codigo or not nome:
+            continue
+        rows.append(
+            {
+                "codigo_cvm": codigo,
+                "nome": nome,
+                "nome_norm": _normalizar_texto(nome),
+                "situacao": situacao,
+            }
+        )
+
+    _company_cache.update({"ts": agora, "rows": rows})
+    return rows
+
+
+def encontrar_empresa(consulta: str) -> dict[str, str] | None:
+    consulta_norm = _normalizar_texto(consulta)
+    if not consulta_norm:
+        return None
+
+    empresas = carregar_empresas_cvm()
+    candidatas = [e for e in empresas if consulta_norm in e["nome_norm"]]
+
+    if not candidatas:
+        # fallback por similaridade
+        scored = sorted(
+            empresas,
+            key=lambda e: SequenceMatcher(None, consulta_norm, e["nome_norm"]).ratio(),
+            reverse=True,
+        )
+        candidatas = scored[:5]
+
+    if not candidatas:
+        return None
+
+    # prioriza empresa ativa e melhor score/menor nome
+    candidatas = sorted(
+        candidatas,
+        key=lambda e: (
+            0 if e["situacao"] == "ATIVO" else 1,
+            -SequenceMatcher(None, consulta_norm, e["nome_norm"]).ratio(),
+            len(e["nome"]),
+        ),
+    )
+    return candidatas[0]
 
 
 def _parse_links_from_html(html: str) -> list[str]:
@@ -37,8 +113,9 @@ def _parse_links_from_html(html: str) -> list[str]:
     return list(dict.fromkeys(urls))
 
 
-def listar_dfps(empresa: str, data_inicial: str = "", data_final: str = "") -> list[str]:
-    payload_base: dict[str, Any] = {
+def listar_dfps_por_codigo(codigo_cvm: str, data_inicial: str = "", data_final: str = "") -> list[str]:
+    payload: dict[str, Any] = {
+        "codigoCVM": codigo_cvm,
         "dataIni": _normalizar_data(data_inicial),
         "dataFim": _normalizar_data(data_final),
         "tipoDocumento": "DFP",
@@ -47,22 +124,11 @@ def listar_dfps(empresa: str, data_inicial: str = "", data_final: str = "") -> l
         "situacaoDocumento": "",
     }
 
-    tentativas = [
-        {**payload_base, "nomeCompanhia": empresa},
-        {**payload_base, "descricaoCompanhia": empresa},
-        {**payload_base, "empresa": empresa},
-    ]
-
-    for payload in tentativas:
-        response = requests.post(CVM_ENDPOINT, json=payload, timeout=DEFAULT_TIMEOUT)
-        response.raise_for_status()
-        body = response.json()
-        html = body.get("d", "") if isinstance(body, dict) else ""
-        links = _parse_links_from_html(html)
-        if links:
-            return links
-
-    return []
+    response = requests.post(CVM_ENDPOINT, json=payload, timeout=DEFAULT_TIMEOUT)
+    response.raise_for_status()
+    body = response.json()
+    html = body.get("d", "") if isinstance(body, dict) else ""
+    return _parse_links_from_html(html)
 
 
 def extrair_tabelas_dfp(url: str) -> pd.DataFrame:
@@ -95,34 +161,40 @@ def health() -> tuple[dict[str, str], int]:
 @app.post("/buscar-dfps")
 def buscar_dfps():
     data = request.get_json(silent=True) or {}
-    empresa = str(data.get("empresa", "")).strip()
-    if not empresa:
+    empresa_consulta = str(data.get("empresa", "")).strip()
+    if not empresa_consulta:
         return jsonify({"erro": "campo 'empresa' é obrigatório"}), 400
 
     try:
-        links = listar_dfps(empresa)
+        empresa = encontrar_empresa(empresa_consulta)
+        if not empresa:
+            return jsonify({"erro": "empresa não encontrada na base da CVM"}), 404
+        links = listar_dfps_por_codigo(empresa["codigo_cvm"])
     except Exception as exc:
         return jsonify({"erro": f"falha ao consultar CVM: {exc}"}), 502
 
     if not links:
         return jsonify({"erro": "nenhuma DFP encontrada para a empresa informada"}), 404
 
-    return jsonify({"empresa": empresa, "links": links})
+    return jsonify({"empresa": empresa["nome"], "codigo_cvm": empresa["codigo_cvm"], "links": links})
 
 
 @app.post("/fill-dfp")
 def fill_dfp():
     data = request.get_json(silent=True) or {}
 
-    empresa = str(data.get("empresa", "")).strip()
+    empresa_consulta = str(data.get("empresa", "")).strip()
     data_inicial = str(data.get("data_inicial", "")).strip()
     data_final = str(data.get("data_final", "")).strip()
 
-    if not empresa:
+    if not empresa_consulta:
         return jsonify({"erro": "campo 'empresa' é obrigatório"}), 400
 
     try:
-        links_dfp = listar_dfps(empresa, data_inicial, data_final)
+        empresa = encontrar_empresa(empresa_consulta)
+        if not empresa:
+            return jsonify({"erro": "empresa não encontrada na base da CVM"}), 404
+        links_dfp = listar_dfps_por_codigo(empresa["codigo_cvm"], data_inicial, data_final)
     except Exception as exc:
         return jsonify({"erro": f"falha ao consultar CVM: {exc}"}), 502
 
@@ -131,6 +203,9 @@ def fill_dfp():
 
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        pd.DataFrame({"empresa": [empresa["nome"]], "codigo_cvm": [empresa["codigo_cvm"]]}).to_excel(
+            writer, sheet_name="empresa", index=False
+        )
         pd.DataFrame({"link_dfp": links_dfp}).to_excel(writer, sheet_name="resumo", index=False)
 
         for i, link in enumerate(links_dfp, start=1):
@@ -141,10 +216,11 @@ def fill_dfp():
             df.to_excel(writer, sheet_name=f"dfp_{i}"[:31], index=False)
 
     output.seek(0)
+    nome_arquivo = re.sub(r"[^a-zA-Z0-9_-]", "_", empresa["nome"])
     return send_file(
         output,
         as_attachment=True,
-        download_name=f"dfp_cvm_{empresa}.xlsx",
+        download_name=f"dfp_cvm_{nome_arquivo}.xlsx",
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 

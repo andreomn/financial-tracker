@@ -69,7 +69,7 @@
         return;
       }
 
-      statusEl.textContent = `Foram encontradas ${data.links.length} DFP(s).`;
+      statusEl.textContent = `Empresa: ${data.empresa} (CVM ${data.codigo_cvm}) • ${data.links.length} DFP(s) encontradas.`;
       data.links.forEach((link, idx) => {
         const tr = document.createElement('tr');
         tr.innerHTML = `<td>${idx + 1}</td><td><a href="${link}" target="_blank">${link}</a></td>`;
