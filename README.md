@@ -1,38 +1,31 @@
 # financial-tracker
 
-Serviço Flask para automatizar o preenchimento de dados financeiros com base nas DFPs públicas da CVM.
+Serviço Flask para consultar DFPs da CVM por **nome da empresa**, listar links e gerar um Excel consolidado.
 
-## O que ele faz
+## Funcionalidades
 
-1. Faz request para o endpoint `ListarDocumentos` da CVM filtrando por `DFP`.
-2. Coleta os links `frmGerenciaPaginaFRE.aspx` retornados.
-3. Abre cada DFP, extrai tabelas e consolida tudo em um arquivo Excel.
-4. Retorna o Excel pronto para download.
+- Interface web (`GET /`) com campo de busca por nome da empresa.
+- Ao pressionar Enter, consulta as DFPs mais recentes na CVM e mostra links em tabela.
+- Botão para baixar Excel com todas as DFPs encontradas.
 
-## Endpoint principal
+## Endpoints
 
-`POST /fill-dfp`
+- `GET /` página HTML.
+- `GET /health` healthcheck.
+- `POST /buscar-dfps` lista links DFP por empresa.
+- `POST /fill-dfp` gera Excel consolidado.
 
-### JSON de entrada
+### Exemplo de payload
 
 ```json
 {
-  "codigo_cvm": "9512",
+  "empresa": "Petrobras",
   "data_inicial": "2025-01-01",
   "data_final": "2025-12-31"
 }
 ```
 
-- `codigo_cvm` é obrigatório.
-- Datas são opcionais e aceitam ISO (`YYYY-MM-DD`) ou texto já em `DD/MM/YYYY`.
-
-### Resposta
-
-Arquivo `.xlsx` com:
-- Aba `resumo`: lista dos links DFP encontrados.
-- Abas `dfp_1`, `dfp_2`, ... com as tabelas extraídas de cada documento.
-
-## Rodando com Docker
+## Docker
 
 ```bash
 docker build -t financial-tracker .
