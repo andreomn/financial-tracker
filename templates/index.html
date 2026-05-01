@@ -44,7 +44,7 @@
       </div>
 
       <div class="box">
-        <h3>Empresas CVM (código + nome)</h3>
+        <h3>Empresas CVM (código + nome)</h3><div id='empresasMeta' style='font-size:12px;color:#6b7280'></div>
         <table id="empresasTabela">
           <thead><tr><th>Código CVM</th><th>Empresa</th><th>Situação</th></tr></thead>
           <tbody id="empresasBody"></tbody>
@@ -61,15 +61,18 @@
     const downloadArea = document.getElementById('downloadArea');
     const btnDownload = document.getElementById('downloadExcel');
     const empresasBody = document.getElementById('empresasBody');
+    const empresasMeta = document.getElementById('empresasMeta');
     let ultimaEmpresa = '';
 
-    async function carregarEmpresas() {
+    let empresasPage = 1;
+    async function carregarEmpresas(page = 1) {
       empresasBody.innerHTML = '<tr><td colspan="3">Carregando...</td></tr>';
       try {
-        const resp = await fetch('/empresas');
+        const resp = await fetch(`/empresas?page=${page}&size=200`);
         const data = await resp.json();
         if (!resp.ok) throw new Error(data.erro || 'Falha ao carregar empresas.');
-        empresasBody.innerHTML = '';
+        if (page === 1) empresasBody.innerHTML = '';
+        empresasMeta.textContent = `Total na CVM: ${data.total}. Exibindo página ${data.page}.`; 
         data.empresas.forEach((e) => {
           const tr = document.createElement('tr');
           tr.innerHTML = `<td>${e.codigo_cvm}</td><td>${e.nome}</td><td>${e.situacao || ''}</td>`;
@@ -134,7 +137,7 @@
       statusEl.textContent = 'Excel gerado com sucesso.';
     });
 
-    carregarEmpresas();
+    carregarEmpresas(empresasPage);
   </script>
 </body>
 </html>
