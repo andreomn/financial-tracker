@@ -1,2 +1,2 @@
-# financial-tracker
-Support for financial inputs from companies registered in CVM
+# return-simulator
+Simulate fully hedged returns of private credit deals in BRL
