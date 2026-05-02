@@ -132,6 +132,8 @@ def _extract_html_payload(body: Any) -> str:
 
     return ""
 
+    if not candidatas:
+        return None
 
 def _parse_links_from_html(html: str) -> list[str]:
     if not isinstance(html, str):
@@ -304,6 +306,7 @@ def buscar_dfps():
 
     return jsonify({"empresa": empresa["nome"], "codigo_cvm": empresa["codigo_cvm"], "links": links})
 
+    return jsonify({"empresa": empresa["nome"], "codigo_cvm": empresa["codigo_cvm"], "links": links})
 
 @app.post("/fill-dfp")
 def fill_dfp():
