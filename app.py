@@ -4,7 +4,7 @@ import logging
 import re
 import time
 import unicodedata
-from datetime import datetime
+from datetime import datetime, timedelta
 from difflib import SequenceMatcher
 from typing import Any
 
@@ -34,6 +34,12 @@ def _normalizar_data(valor: str | None) -> str:
         return datetime.fromisoformat(valor).strftime("%d/%m/%Y")
     except ValueError:
         return valor
+
+
+def _datas_padrao_consulta() -> tuple[str, str]:
+    hoje = datetime.utcnow().date()
+    inicio = hoje - timedelta(days=365)
+    return inicio.strftime("%d/%m/%Y"), hoje.strftime("%d/%m/%Y")
 
 
 def _normalizar_texto(texto: str) -> str:
@@ -126,8 +132,8 @@ def _extract_html_payload(body: Any) -> str:
 
     return ""
 
-    candidatas = sorted(candidatas, key=lambda e: (0 if e["situacao"] == "ATIVO" else 1, -SequenceMatcher(None, consulta_norm, e["nome_norm"]).ratio(), len(e["nome"])))
-    return candidatas[0]
+    if not candidatas:
+        return None
 
 def _parse_links_from_html(html: str) -> list[str]:
     if not isinstance(html, str):
@@ -146,9 +152,13 @@ def _parse_links_from_html(html: str) -> list[str]:
 
 def listar_dfps_por_codigo(codigo_cvm: str, data_inicial: str = "", data_final: str = "") -> list[str]:
     codigo6 = _codigo_cvm_6_digitos(codigo_cvm)
+    data_de = _normalizar_data(data_inicial)
+    data_ate = _normalizar_data(data_final)
+    if not data_de or not data_ate:
+        data_de, data_ate = _datas_padrao_consulta()
     payload: dict[str, Any] = {
-        "dataDe": _normalizar_data(data_inicial) or "",
-        "dataAte": _normalizar_data(data_final) or "",
+        "dataDe": data_de,
+        "dataAte": data_ate,
         "empresa": codigo6,
         "setorAtividade": "-1",
         "categoriaEmissor": "-1",
@@ -165,7 +175,14 @@ def listar_dfps_por_codigo(codigo_cvm: str, data_inicial: str = "", data_final: 
         "token": "",
         "versaoCaptcha": "",
     }
-    logger.info("listar_dfps_por_codigo codigo_original=%s codigo6=%s payload_empresa=%s", codigo_cvm, codigo6, payload["empresa"])
+    logger.info(
+        "listar_dfps_por_codigo codigo_original=%s codigo6=%s payload_empresa=%s dataDe=%s dataAte=%s",
+        codigo_cvm,
+        codigo6,
+        payload["empresa"],
+        payload["dataDe"],
+        payload["dataAte"],
+    )
     response = requests.post(CVM_ENDPOINT, json=payload, timeout=DEFAULT_TIMEOUT)
     response.raise_for_status()
     body = response.json()
