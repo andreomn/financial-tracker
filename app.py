@@ -132,6 +132,8 @@ def _extract_html_payload(body: Any) -> str:
 
     return ""
 
+    if not candidatas:
+        return None
 
 def _parse_links_from_html(html: str) -> list[str]:
     if not isinstance(html, str):
