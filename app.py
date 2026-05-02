@@ -147,6 +147,9 @@ def _parse_links_from_html(html: str) -> list[str]:
             continue
         numero = match.group(0).split("=")[1]
         urls.append(f"{FRE_BASE_URL}?NumeroSequencialDocumento={numero}&CodigoTipoInstituicao=1")
+    # Fallback: alguns retornos da CVM trazem o número fora de tags <a>.
+    for numero in re.findall(r"NumeroSequencialDocumento=(\d+)", html):
+        urls.append(f"{FRE_BASE_URL}?NumeroSequencialDocumento={numero}&CodigoTipoInstituicao=1")
     return list(dict.fromkeys(urls))
 
 
@@ -156,7 +159,7 @@ def listar_dfps_por_codigo(codigo_cvm: str, data_inicial: str = "", data_final: 
     data_ate = _normalizar_data(data_final)
     if not data_de or not data_ate:
         data_de, data_ate = _datas_padrao_consulta()
-    payload: dict[str, Any] = {
+    payload_base: dict[str, Any] = {
         "dataDe": data_de,
         "dataAte": data_ate,
         "empresa": codigo6,
@@ -175,23 +178,44 @@ def listar_dfps_por_codigo(codigo_cvm: str, data_inicial: str = "", data_final: 
         "token": "",
         "versaoCaptcha": "",
     }
-    logger.info(
-        "listar_dfps_por_codigo codigo_original=%s codigo6=%s payload_empresa=%s dataDe=%s dataAte=%s",
-        codigo_cvm,
-        codigo6,
-        payload["empresa"],
-        payload["dataDe"],
-        payload["dataAte"],
-    )
-    response = requests.post(CVM_ENDPOINT, json=payload, timeout=DEFAULT_TIMEOUT)
-    response.raise_for_status()
-    body = response.json()
-    html = _extract_html_payload(body)
-    if not html:
-        logger.warning("listar_dfps_por_codigo_empty_html codigo=%s body_type=%s", codigo_cvm, type(body).__name__)
-    links = _parse_links_from_html(html)
-    logger.info("listar_dfps_por_codigo_done codigo=%s total_links=%s", codigo_cvm, len(links))
-    return links
+    tentativas = [
+        {"categoria": "EST_4", "periodo": "2"},   # DFP anual
+        {"categoria": "EST_4", "periodo": "-1"},  # todos períodos na categoria
+        {"categoria": "-1", "periodo": "-1"},     # fallback amplo
+    ]
+
+    for i, override in enumerate(tentativas, start=1):
+        payload = {**payload_base, **override}
+        logger.info(
+            "listar_dfps_por_codigo_try=%s codigo_original=%s codigo6=%s payload_empresa=%s dataDe=%s dataAte=%s categoria=%s periodo=%s",
+            i,
+            codigo_cvm,
+            codigo6,
+            payload["empresa"],
+            payload["dataDe"],
+            payload["dataAte"],
+            payload["categoria"],
+            payload["periodo"],
+        )
+        response = requests.post(CVM_ENDPOINT, json=payload, timeout=DEFAULT_TIMEOUT)
+        response.raise_for_status()
+        body = response.json()
+        html = _extract_html_payload(body)
+        if not html:
+            logger.warning(
+                "listar_dfps_por_codigo_empty_html_try=%s codigo=%s body_type=%s",
+                i,
+                codigo_cvm,
+                type(body).__name__,
+            )
+            continue
+        links = _parse_links_from_html(html)
+        logger.info("listar_dfps_por_codigo_try_done=%s codigo=%s total_links=%s", i, codigo_cvm, len(links))
+        if links:
+            return links
+
+    logger.info("listar_dfps_por_codigo_done codigo=%s total_links=0", codigo_cvm)
+    return []
 
 
 def extrair_tabelas_dfp(url: str) -> pd.DataFrame:
@@ -282,6 +306,7 @@ def buscar_dfps():
 
     return jsonify({"empresa": empresa["nome"], "codigo_cvm": empresa["codigo_cvm"], "links": links})
 
+    return jsonify({"empresa": empresa["nome"], "codigo_cvm": empresa["codigo_cvm"], "links": links})
 
 @app.post("/fill-dfp")
 def fill_dfp():
